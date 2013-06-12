@@ -1,4 +1,4 @@
-dbf v0.95.001
+dbf v0.95.004
 =============
 
 dbf (also known as python dbase) is a module for reading/writing
