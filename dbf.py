@@ -31,7 +31,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-version = (0, 95, 1)
+version = (0, 95, 4)
 
 __all__ = (
         'Table', 'Record', 'List', 'Index', 'Relation', 'Iter', 'Date', 'DateTime', 'Time',
@@ -63,6 +63,7 @@ from array import array
 from bisect import bisect_left, bisect_right
 import decimal
 from decimal import Decimal
+from glob import glob
 from math import floor
 import types
 from types import NoneType
@@ -469,8 +470,6 @@ class NullType(object):
             raise TypeError("unhashable type: 'Null'")
 
     def __new__(cls, *args):
-        if args:
-            print args
         return cls.null
 
     def __nonzero__(self):
@@ -2629,16 +2628,37 @@ class RecordTemplate(object):
             self.__setattr__(name, value)
         elif isinstance(name, Integer):
             self.__setattr__(self._meta.fields[name], value)
+        #elif isinstance(name, slice):
+        #    sequence = []
+        #    for field in self._meta.fields[name]:
+        #        sequence.append(field)
+        #    if len(sequence) != len(value):
+        #        raise DbfError("length of slices not equal")
+        #    for field, val in zip(sequence, value):
+        #        self.__setattr__(field, val)
+        #else:
+        #    raise TypeError("%s is not a field name" % name)
         elif isinstance(name, slice):
             sequence = []
+            field_names = dbf.field_names(self)
+            if isinstance(name.start, String) or isinstance(name.stop, String):
+                start, stop, step = name.start, name.stop, name.step
+                if start not in field_names or stop not in field_names:
+                    raise MissingFieldError("Either %r or %r (or both) are not valid field names" % (start, stop))
+                if step is not None and not isinstance(step, Integer):
+                    raise DbfError("step value must be an int or long, not %r" % type(step))
+                start = field_names.index(start)
+                stop = field_names.index(stop) + 1
+                name = slice(start, stop, step)
             for field in self._meta.fields[name]:
                 sequence.append(field)
             if len(sequence) != len(value):
                 raise DbfError("length of slices not equal")
             for field, val in zip(sequence, value):
-                self.__setattr__(field, val)
+                self[field] = val
         else:
             raise TypeError("%s is not a field name" % name)
+
 
     def __repr__(self):
         return self._data.tostring()
@@ -4267,8 +4287,23 @@ class Table(_Navigation):
         else:
             base, ext = os.path.splitext(filename)
             if ext.lower() != '.dbf':
-                meta.filename =  filename + '.dbf'
-            meta.memoname = base + self._memoext
+                meta.filename = filename + '.dbf'
+                searchname = filename + '.[Db][Bb][Ff]'
+            else:
+                meta.filename = filename
+                searchname = filename
+            matches = glob(searchname)
+            if len(matches) == 1:
+                meta.filename = matches[0]
+            elif matches:
+                raise DbfError("please specify exactly which of %r you want" % (matches, ))
+            case = [('l','u')[c.isupper()] for c in meta.filename[-4:]]
+            if case == ['l','l','l','l']:
+                meta.memoname = base + self._memoext.lower()
+            elif case == ['l','u','u','u']:
+                meta.memoname = base + self._memoext.upper()
+            else:
+                meta.memoname = base + ''.join([c.lower() if case[i] == 'l' else c.upper() for i, c in enumerate(self._memoext)])
             meta.location = ON_DISK
         if codepage is not None:
             header.codepage(codepage)
@@ -4370,7 +4405,7 @@ class Table(_Navigation):
         else:
             base, ext = os.path.splitext(filename)
             if ext.lower() != '.dbf':
-                filename =  filename + '.dbf'
+                filename = filename + '.dbf'
             possibles = guess_table_type(filename)
             if len(possibles) == 1:
                 return object.__new__(possibles[0][2])
@@ -5503,15 +5538,15 @@ class FpTable(Table):
                     'Class':datetime.date, 'Empty':none, 'flags':('null', ),
                     },
             'M' : {
-                    'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Type':'Memo', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '          ', 'Init':add_memo,
                     'Class':unicode, 'Empty':unicode, 'flags':('binary', 'nocptrans', 'null', ),
                     },
             'G' : {
-                    'Type':'General', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Type':'General', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '          ', 'Init':add_memo,
                     'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
             'P' : {
-                    'Type':'Picture', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '\x00\x00\x00\x00', 'Init':add_vfp_memo,
+                    'Type':'Picture', 'Retrieve':retrieve_memo, 'Update':update_memo, 'Blank':lambda x: '          ', 'Init':add_memo,
                     'Class':bytes, 'Empty':bytes, 'flags':('null', ),
                     },
             '0' : {
@@ -7212,7 +7247,12 @@ def table_type(filename):
     """
     base, ext = os.path.splitext(filename)
     if ext == '':
-        filename = base + '.dbf'
+        filename = base + '.[Dd][Bb][Ff]'
+        matches = glob(filename)
+        if matches:
+            filename = matches[0]
+        else:
+            filename = base + '.dbf'
     if not os.path.exists(filename):
         raise DbfError('File %s not found' % filename)
     fd = open(filename)
@@ -7268,6 +7308,8 @@ def from_csv(csvfile, to_disk=False, filename=None, field_names=None, extra_fiel
     """
     reader = csv.reader(codecs.open(csvfile, 'r', encoding='latin-1', errors=errors))
     if field_names:
+        if isinstance(field_names, String):
+            field_names = field_names.split()
         if ' ' not in field_names[0]:
             field_names = ['%s M' % fn for fn in field_names]
     else:

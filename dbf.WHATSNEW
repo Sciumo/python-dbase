@@ -1,7 +1,22 @@
 What's New
 ==========
 
-0.94.006
+0.95.003
+--------
+
+Fixed issue with incorrect memo size in base file (thanks, Glenn!)
+
+Memo file extensions now have the same casing as the dbf file's, and are
+searched for that way (thanks again, Glenn!)
+
+0.95.002
+--------
+
+Fixed the version number in this file for the last release. :/
+
+string slices now work for RecordTemplate
+
+0.95.001
 --------
 
 Miscellaneous bugs squashed.
